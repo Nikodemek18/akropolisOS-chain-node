@@ -133,7 +133,9 @@ decl_module! {
         // ethereum-side multi-signed mint operation
         fn multi_signed_mint(origin, message_id: T::Hash, from: H160, to: T::AccountId, #[compact] amount: TokenBalance)-> Result {
             ensure_signed(origin)?;
-
+//             let default_token = <token::Module<T>>::token_default().clone();
+// -            <token::Module<T>>::check_token_exist(validator.clone(), &default_token.symbol)?;
+// -            let token_id = <token::Module<T>>::token_id_by_symbol(default_token.symbol);
             if !<Messages<T>>::exists(message_id) {
                 let message = Message{
                     message_id,
@@ -182,8 +184,9 @@ decl_module! {
             ensure_signed(origin)?;
             let mut message = <Messages<T>>::get(message_id);
             message.status = Status::Canceled;
-
-            <token::Module<T>>::unlock(&message.substrate_address, message.amount)?;
+            
+            //TODO: use token_id instead of 0
+            <token::Module<T>>::unlock(0, &message.substrate_address, message.amount)?;
             <Messages<T>>::insert(message_id, message);
 
             Ok(())
@@ -233,7 +236,8 @@ impl<T: Trait> Module<T> {
 
     /// lock funds after set_transfer call
     fn lock_for_burn(account: T::AccountId, amount: TokenBalance) -> Result {
-        <token::Module<T>>::lock(account, amount)?;
+        //TODO: use token_id instead of 0
+        <token::Module<T>>::lock(0, account, amount)?;
 
         Ok(())
     }
@@ -243,8 +247,9 @@ impl<T: Trait> Module<T> {
         let from = message.substrate_address.clone();
         let to = message.eth_address;
 
-        <token::Module<T>>::unlock(&from, message.amount)?;
-        <token::Module<T>>::_burn(from.clone(), message.amount)?;
+//TODO: use token_id instead of 0
+        <token::Module<T>>::unlock(0, &from, message.amount)?;
+        <token::Module<T>>::_burn(0, from.clone(), message.amount)?;
 
         Self::deposit_event(RawEvent::Burned(message_id, from, to, message.amount));
         Ok(())
@@ -255,7 +260,7 @@ impl<T: Trait> Module<T> {
             Status::Deposit => match message.status {
                 Status::Approved => {
                     let to = message.substrate_address.clone();
-                    <token::Module<T>>::_mint(to, message.amount)?;
+                    <token::Module<T>>::_mint(0, to, message.amount)?;
                     Self::deposit_event(RawEvent::Minted(message.message_id));
                     Self::update_status(message.message_id, Status::Confirmed)
                 }
@@ -455,8 +460,8 @@ mod tests {
             let transfer = BridgeModule::transfers(0);
             assert_eq!(transfer.open, false);
 
-            assert_eq!(TokenModule::balance_of(USER2), 1000);
-            assert_eq!(TokenModule::total_supply(), 1000);
+            assert_eq!(TokenModule::balance_of((0, USER2)), 1000);
+            assert_eq!(TokenModule::total_supply(0), 1000);
         })
     }
     #[test]
@@ -490,8 +495,8 @@ mod tests {
                 ),
                 "This transfer is not open"
             );
-            assert_eq!(TokenModule::balance_of(USER2), 1000);
-            assert_eq!(TokenModule::total_supply(), 1000);
+            assert_eq!(TokenModule::balance_of((0, USER2)), 1000);
+            assert_eq!(TokenModule::total_supply(0), 1000);
             let transfer = BridgeModule::transfers(0);
             assert_eq!(transfer.open, false);
 
@@ -537,7 +542,7 @@ mod tests {
             assert_eq!(message.status, Status::Withdraw);
 
             //approval
-            assert_eq!(TokenModule::locked(USER2), 0);
+            assert_eq!(TokenModule::locked((0, USER2)), 0);
             assert_ok!(BridgeModule::approve_transfer(
                 Origin::signed(V1),
                 sub_message_id
@@ -552,8 +557,8 @@ mod tests {
 
             // at this point transfer is in Approved status and are waiting for confirmation
             // from ethereum side to burn. Funds are locked.
-            assert_eq!(TokenModule::locked(USER2), 500);
-            assert_eq!(TokenModule::balance_of(USER2), 1000);
+            assert_eq!(TokenModule::locked((0, USER2)), 500);
+            assert_eq!(TokenModule::balance_of((0, USER2)), 1000);
             // once it happends, validators call confirm_transfer
 
             assert_ok!(BridgeModule::confirm_transfer(
@@ -572,8 +577,8 @@ mod tests {
             // assert_ok!(BridgeModule::confirm_transfer(Origin::signed(USER1), sub_message_id));
             //Burned(Hash, AccountId, H160, u64) event emitted
 
-            assert_eq!(TokenModule::balance_of(USER2), 500);
-            assert_eq!(TokenModule::total_supply(), 500);
+            assert_eq!(TokenModule::balance_of((0, USER2)), 500);
+            assert_eq!(TokenModule::total_supply(0), 500);
         })
     }
     #[test]
@@ -597,8 +602,8 @@ mod tests {
                 USER2,
                 1000
             ));
-            assert_eq!(TokenModule::balance_of(USER2), 1000);
-            assert_eq!(TokenModule::total_supply(), 1000);
+            assert_eq!(TokenModule::balance_of((0, USER2)), 1000);
+            assert_eq!(TokenModule::total_supply(0), 1000);
 
             //substrate ----> ETH
             assert_ok!(BridgeModule::set_transfer(
@@ -612,7 +617,7 @@ mod tests {
             let message = BridgeModule::messages(sub_message_id);
             assert_eq!(message.status, Status::Withdraw);
 
-            assert_eq!(TokenModule::locked(USER2), 0);
+            assert_eq!(TokenModule::locked((0, USER2)), 0);
             // lets say validators blacked out and we
             // try to confirm without approval anyway
             assert_noop!(
