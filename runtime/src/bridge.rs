@@ -3,7 +3,7 @@
 /// and transfer tokens on substrate side freely
 ///
 use crate::token;
-use crate::types::{MemberId, ProposalId, TokenBalance};
+use crate::types::{MemberId, ProposalId, TokenBalance, TokenId};
 use parity_codec::{Decode, Encode};
 use primitives::H160;
 use runtime_primitives::traits::{As, Hash};
@@ -39,6 +39,7 @@ pub struct Message<AccountId, Hash> {
     eth_address: H160,
     substrate_address: AccountId,
     amount: TokenBalance,
+    token: TokenId,
     status: Status,
     direction: Status,
 }
@@ -54,6 +55,7 @@ where
             eth_address: H160::default(),
             substrate_address: A::default(),
             amount: TokenBalance::default(),
+            token: TokenId::default(),
             status: Status::Withdraw,
             direction: Status::Withdraw,
         }
@@ -108,18 +110,22 @@ decl_module! {
         fn deposit_event<T>() = default;
 
         // initiate substrate -> ethereum transfer.
-        // create proposition and emit the RelayMessage event
+        // create transfer and emit the RelayMessage event
         fn set_transfer(origin, to: H160, #[compact] amount: TokenBalance)-> Result
         {
             let from = ensure_signed(origin)?;
-
             let transfer_hash = (&from, &to, amount, T::BlockNumber::sa(0)).using_encoded(<T as system::Trait>::Hashing::hash);
+            
+            let default_token = <token::Module<T>>::token_default();
+            <token::Module<T>>::check_token_exist(&default_token.symbol)?;
+            let token_id = <token::Module<T>>::token_id_by_symbol(default_token.symbol);
 
             let message = Message{
                 message_id: transfer_hash,
                 eth_address: to,
                 substrate_address: from,
                 amount,
+                token: token_id,
                 status: Status::Withdraw,
                 direction: Status::Withdraw,
             };
@@ -133,15 +139,18 @@ decl_module! {
         // ethereum-side multi-signed mint operation
         fn multi_signed_mint(origin, message_id: T::Hash, from: H160, to: T::AccountId, #[compact] amount: TokenBalance)-> Result {
             ensure_signed(origin)?;
-//             let default_token = <token::Module<T>>::token_default().clone();
-// -            <token::Module<T>>::check_token_exist(validator.clone(), &default_token.symbol)?;
-// -            let token_id = <token::Module<T>>::token_id_by_symbol(default_token.symbol);
+
+            let default_token = <token::Module<T>>::token_default();
+            <token::Module<T>>::check_token_exist(&default_token.symbol)?;
+            let token_id = <token::Module<T>>::token_id_by_symbol(default_token.symbol);
+
             if !<Messages<T>>::exists(message_id) {
                 let message = Message{
                     message_id,
                     eth_address: from,
                     substrate_address: to,
                     amount,
+                    token: token_id,
                     status: Status::Deposit,
                     direction: Status::Deposit,
                 };
@@ -184,7 +193,6 @@ decl_module! {
             ensure_signed(origin)?;
             let mut message = <Messages<T>>::get(message_id);
             message.status = Status::Canceled;
-            
             //TODO: use token_id instead of 0
             <token::Module<T>>::unlock(0, &message.substrate_address, message.amount)?;
             <Messages<T>>::insert(message_id, message);
@@ -247,7 +255,7 @@ impl<T: Trait> Module<T> {
         let from = message.substrate_address.clone();
         let to = message.eth_address;
 
-//TODO: use token_id instead of 0
+        //TODO: use token_id instead of 0
         <token::Module<T>>::unlock(0, &from, message.amount)?;
         <token::Module<T>>::_burn(0, from.clone(), message.amount)?;
 
